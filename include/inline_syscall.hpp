@@ -14,92 +14,568 @@
  * limitations under the License.
  */
 
-#ifndef JM_INLINE_SYSCALL_HPP
-#define JM_INLINE_SYSCALL_HPP
+#ifndef JM_INLINE_SYSCALL_INL
+#define JM_INLINE_SYSCALL_INL
 
-#include <cstdint>
+#include "inline_syscall.hpp"
 
-/// \brief Returns an instance of syscall_function for the given syscall.
-/// \param function_type A function pointer whose type and name match the corresponding
-///                      syscall.
-#define INLINE_SYSCALL(function_pointer) \
-    INLINE_SYSCALL_MANUAL(               \
-        function_pointer,                \
-        ::jm::detail::syscall_holder<::jm::hash(#function_pointer)>::entry.id)
-
-/// \brief Returns an instance of syscall_function for the given syscall.
-/// \param function_type A function type whose name matches the corresponding syscall.
-#define INLINE_SYSCALL_T(function_type)                                    \
-    ::jm::syscall_function<function_type>                                  \
-    {                                                                      \
-        ::jm::detail::syscall_holder<::jm::hash(#function_type)>::entry.id \
-    }
-
-/// \brief Returns an instance of syscall_function for the given syscall id.
-/// \param function_pointer A function pointer whose type matches the corresponding syscall.
-/// \param syscall_id The id of the syscall specified by function_pointer.
-/// \note There is no INLINE_SYSCALL_MANUAL_T because you can just write
-///       jm::inline_syscall<function_type>{id}
-#define INLINE_SYSCALL_MANUAL(function_pointer, syscall_id) \
-    ::jm::syscall_function<decltype(function_pointer)> { syscall_id }
-
-#ifndef JM_INLINE_SYSCALL_ENTRY_TYPE
-/// \brief The default syscall entry type is small which doesn't allow retrying
-/// initialization.
-#define JM_INLINE_SYSCALL_ENTRY_TYPE ::jm::syscall_entry_small
+#if defined(_MSC_VER)
+#define JM_INLINE_SYSCALL_FORCEINLINE __forceinline
+#else
+#define JM_INLINE_SYSCALL_FORCEINLINE __attribute__((always_inline))
 #endif
+
+// helper macro to reduce the typing a bit
+#define JM_INLINE_SYSCALL_STUB(...) \
+    JM_INLINE_SYSCALL_FORCEINLINE std::int32_t syscall(__VA_ARGS__) noexcept
 
 namespace jm {
 
-    template<class Fn>
-    class syscall_function;
+    // hash used for the syscall names
+    inline constexpr std::uint32_t hash(const char* str) noexcept
+    {
+        std::uint32_t value = 2166136261;
 
-    /// \brief A light wrapper around the syscall to provide some type safety.
+        str += 2;
+        for(;;) {
+            const char c = *str++;
+            if(!c)
+                return value;
+
+            value = static_cast<std::uint32_t>((value ^ c) * 16777619ull);
+        }
+    }
+
+    constexpr syscall_entry_full::syscall_entry_full(std::uint32_t hash_) noexcept
+        : hash(hash_)
+    {}
+
+    namespace detail {
+
+        // stores syscall info in a section that we create
+        // Because we store it in its own section we can initialize all values like an
+        // array
+        template<std::uint32_t Hash>
+        struct syscall_holder {
+            [[gnu::section(
+                "_sysc")]] inline static JM_INLINE_SYSCALL_ENTRY_TYPE entry{ Hash };
+        };
+
+        // we instantiate the first entry with 0 hash to be able to get a pointer
+        template struct syscall_holder<0>;
+
+        // disables register keyword deprecation warnings
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wregister"
+
+        /* syscall stubs begin here.
+         *
+         * They all seem more or less the same and that's true, however
+         * we need them like this for best possible code generation.
+         */
+
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id)
+        {
+            register void* a1 asm("r10");
+            void*          a2;
+            register void* a3 asm("r8");
+            register void* a4 asm("r9");
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("syscall\n"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(a2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id)
+                         : "memory", "cc");
+            return status;
+        }
+
+        template<class T1>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1)
+        {
+            register auto  a1 asm("r10") = _1;
+            void*          a2;
+            register void* a3 asm("r8");
+            register void* a4 asm("r9");
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("syscall\n"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(a2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id), "r"(a1)
+                         : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2)
+        {
+            register auto  a1 asm("r10") = _1;
+            register void* a3 asm("r8");
+            register void* a4 asm("r9");
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("syscall\n"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(_2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id), "r"(a1), "d"(_2)
+                         : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3)
+        {
+            register auto  a1 asm("r10") = _1;
+            register auto  a3 asm("r8")  = _3;
+            register void* a4 asm("r9");
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("syscall\n"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(_2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id), "r"(a1), "d"(_2), "r"(a3)
+                         : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("syscall\n"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(_2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id), "r"(a1), "d"(_2), "r"(a3), "r"(a4)
+                         : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $48, %%rsp\n"
+                         "movq %[a5], 40(%%rsp)\n"
+                         "syscall\n"
+                         "add $48, %%rsp"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(_2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id),
+                           "r"(a1),
+                           "d"(_2),
+                           "r"(a3),
+                           "r"(a4),
+                           [ a5 ] "re"(reinterpret_cast<void*>(_5))
+                         : "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $64, %%rsp\n"
+                         "movq %[a5], 40(%%rsp)\n"
+                         "movq %[a6], 48(%%rsp)\n"
+                         "syscall\n"
+                         "add $64, %%rsp"
+                         : "=a"(status),
+                           "=r"(a1),
+                           "=d"(_2),
+                           "=r"(a3),
+                           "=r"(a4),
+                           "=c"(unused_output),
+                           "=r"(unused_output2)
+                         : "a"(id),
+                           "r"(a1),
+                           "d"(_2),
+                           "r"(a3),
+                           "r"(a4),
+                           [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                           [ a6 ] "re"(reinterpret_cast<void*>(_6))
+                         : "memory", "cc");
+            return status;
+        }
+
+        // clang-format off
+    
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $64, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "syscall\n"
+                        "add $64, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                           "r"(a1),
+                           "d"(_2),
+                           "r"(a3),
+                           "r"(a4),
+                           [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                           [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                           [ a7 ] "re"(reinterpret_cast<void*>(_7))
+                        : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7, T8 _8)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $80, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "syscall\n"
+                        "add $80, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8))
+                        : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8, class T9>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7, T8 _8, T9 _9)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $80, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "movq %[a9], 72(%%rsp)\n"
+                        "syscall\n"
+                        "add $80, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8)),
+                        [ a9 ] "re"(reinterpret_cast<void*>(_9))
+                        : "memory", "cc");
+            return status;
+        }
+
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8, class T9, class T10>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2,T3 _3,T4 _4,T5 _5,T6 _6,T7 _7,T8 _8, T9 _9, T10 _10)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $96, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "movq %[a9], 72(%%rsp)\n"
+                        "movq %[a10], 80(%%rsp)\n"
+                        "syscall\n"
+                        "add $96, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8)),
+                        [ a9 ] "re"(reinterpret_cast<void*>(_9)),
+                        [ a10 ] "re"(reinterpret_cast<void*>(_10))
+                        : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8, class T9, class T10, class T11>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7, T8 _8, T9 _9, T10 _10, T11 _11)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $96, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "movq %[a9], 72(%%rsp)\n"
+                        "movq %[a10], 80(%%rsp)\n"
+                        "movq %[a11], 88(%%rsp)\n"
+                        "syscall\n"
+                        "add $96, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8)),
+                        [ a9 ] "re"(reinterpret_cast<void*>(_9)),
+                        [ a10 ] "re"(reinterpret_cast<void*>(_10)),
+                        [ a11 ] "re"(reinterpret_cast<void*>(_11))
+                        : "memory", "cc");
+            return status;
+        }
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8, class T9, class T10, class T11, class T12>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7, T8 _8, T9 _9, T10 _10, T11 _11, T12 _12)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $112, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "movq %[a9], 72(%%rsp)\n"
+                        "movq %[a10], 80(%%rsp)\n"
+                        "movq %[a11], 88(%%rsp)\n"
+                        "movq %[a12], 96(%%rsp)\n"
+                        "syscall\n"
+                        "add $112, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8)),
+                        [ a9 ] "re"(reinterpret_cast<void*>(_9)),
+                        [ a10 ] "re"(reinterpret_cast<void*>(_10)),
+                        [ a11 ] "re"(reinterpret_cast<void*>(_11)),
+                        [ a12 ] "re"(reinterpret_cast<void*>(_12))
+                        : "memory", "cc");
+            return status;
+        }
+
+
+        template<class T1, class T2, class T3, class T4, class T5, class T6, class T7, class T8, class T9, class T10, class T11, class T12, class T13>
+        JM_INLINE_SYSCALL_STUB(std::uint32_t id, T1 _1, T2 _2, T3 _3, T4 _4, T5 _5, T6 _6, T7 _7, T8 _8, T9 _9, T10 _10, T11 _11, T12 _12, T13 _13)
+        {
+            register auto a1 asm("r10") = _1;
+            register auto a3 asm("r8")  = _3;
+            register auto a4 asm("r9")  = _4;
+
+            void*          unused_output;
+            register void* unused_output2 asm("r11");
+
+            std::int32_t status;
+            asm volatile("sub $112, %%rsp\n"
+                        "movq %[a5], 40(%%rsp)\n"
+                        "movq %[a6], 48(%%rsp)\n"
+                        "movq %[a7], 56(%%rsp)\n"
+                        "movq %[a8], 64(%%rsp)\n"
+                        "movq %[a9], 72(%%rsp)\n"
+                        "movq %[a10], 80(%%rsp)\n"
+                        "movq %[a11], 88(%%rsp)\n"
+                        "movq %[a12], 96(%%rsp)\n"
+                        "movq %[a13], 104(%%rsp)\n"
+                        "syscall\n"
+                        "add $112, %%rsp"
+                        : "=a"(status),
+                        "=r"(a1),
+                        "=d"(_2),
+                        "=r"(a3),
+                        "=r"(a4),
+                        "=c"(unused_output),
+                        "=r"(unused_output2)
+                        : "a"(id),
+                        "r"(a1),
+                        "d"(_2),
+                        "r"(a3),
+                        "r"(a4),
+                        [ a5 ] "re"(reinterpret_cast<void*>(_5)),
+                        [ a6 ] "re"(reinterpret_cast<void*>(_6)),
+                        [ a7 ] "re"(reinterpret_cast<void*>(_7)),
+                        [ a8 ] "re"(reinterpret_cast<void*>(_8)),
+                        [ a9 ] "re"(reinterpret_cast<void*>(_9)),
+                        [ a10 ] "re"(reinterpret_cast<void*>(_10)),
+                        [ a11 ] "re"(reinterpret_cast<void*>(_11)),
+                        [ a12 ] "re"(reinterpret_cast<void*>(_12)),
+                        [ a13 ] "re"(reinterpret_cast<void*>(_13))
+                        : "memory", "cc");
+            return status;
+        }
+
+        // clang-format on
+
+#pragma GCC diagnostic pop
+
+    } // namespace detail
+
     template<class R, class... Args>
-    class syscall_function<R(Args...)> {
-        std::uint32_t _id = 0;
+    inline R syscall_function<R(Args...)>::operator()(Args... args) const noexcept
+    {
+        return detail::syscall(_id, args...);
+    }
 
-    public:
-        /// \brief Initializes the syscall with zero id
-        constexpr syscall_function() noexcept = default;
-
-        /// \brief initializes syscall function with given id
-        constexpr syscall_function(std::uint32_t id) noexcept : _id(id) {}
-
-        /// \brief Performs a syscall with the given arguments
-        inline R operator()(Args... args) const noexcept;
-    };
-
-    /// \brief Holds syscall id and syscall function name hash.
-    ///        As such it is possible to retry initialization.
-    struct syscall_entry_full {
-        // the syscall id that has to be changed during initialization.
-        std::uint32_t id = 0;
-
-        // the hash of syscall function name.
-        std::uint32_t hash = 0;
-
-        constexpr syscall_entry_full() noexcept = default;
-        constexpr syscall_entry_full(std::uint32_t hash) noexcept;
-    };
-
-    /// \brief Holds syscall hash for init that will be overwritten with id during init.
-    ///        If init fails it is not possible to recover as id will be treated as hash.
-    union syscall_entry_small {
-        std::uint32_t id;
-        std::uint32_t hash;
-    };
-
-    /// \brief Returns syscall entry array.
-    /// \note The last entry _should_ be zeroed.
-    inline JM_INLINE_SYSCALL_ENTRY_TYPE* syscall_entries() noexcept;
-
-    /// \brief Hashes the given function name.
-    /// \note Skips first 2 characters (Nt/Zw) to avoid creating duplicate entries.
-    inline constexpr std::uint32_t hash(const char* str) noexcept;
+    inline JM_INLINE_SYSCALL_ENTRY_TYPE* syscall_entries() noexcept
+    {
+        return &detail::syscall_holder<0>::entry + 1;
+    }
 
 } // namespace jm
 
-#include "inline_syscall.inl"
-
-#endif // JM_INLINE_SYSCALL_HPP
+#endif // JM_INLINE_SYSCALL_INL
